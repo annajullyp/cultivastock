@@ -40,7 +40,7 @@
 
 ## 6. Demonstração
 
-* **Vídeo e Exemplos:** [Inserir link do vídeo no YouTube/Drive demonstrando o uso aqui]
+* **Vídeo e Exemplos:** https://drive.google.com/file/d/1Ibmhd2T8xpfXQ5JwWw-hgF4C4DJzZY5-/view?usp=drive_link
 > O vídeo exemplifica o fluxo e a funcionalidade do sistema para o uso real e prático.
 
 ---
