@@ -26,7 +26,7 @@
 
 ## 4. Como Testar
 
-* **Execução:** Acessar o sistema através do link disponibilizado pelo GIT: [inserir link aqui]
+* **Execução:** Acessar o sistema através do link disponibilizado pelo GIT: https://annajullyp.github.io/cultivastock/
 
 ---
 
