@@ -1,0 +1,5 @@
+package com.cultivastock.cultivastock
+
+import io.flutter.embedding.android.FlutterActivity
+
+class MainActivity : FlutterActivity()
