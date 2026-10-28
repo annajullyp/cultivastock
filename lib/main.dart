@@ -97,6 +97,20 @@ class CultivaFormat {
     final min = d.minute.toString().padLeft(2, '0');
     return '$day $month • $hour:$min';
   }
+
+  static String rate(double value) {
+    if (value <= 0) return '0.0';
+    if (value < 1.0) {
+      final s = value.toStringAsFixed(2);
+      return s.endsWith('0') ? value.toStringAsFixed(1) : s;
+    }
+    if (value < 10.0) {
+      final s = value.toStringAsFixed(2);
+      if (s.endsWith('0')) return value.toStringAsFixed(1);
+      return s;
+    }
+    return value.toStringAsFixed(1);
+  }
 }
 
 // ============================================================================
@@ -223,43 +237,89 @@ class Product {
     this.consumptionPeriod = 'Por Mês',
   });
 
-  // Lógica de Negócio: Cálculo de Consumo Médio Dinâmico e Reativo
-  // Atualiza instantaneamente a cada saída/baixa registrada
-  double get averageWeeklyConsumption {
-    final thirtyDaysAgo = DateTime.now().subtract(const Duration(days: 30));
-    final recentOutflows = history.where(
-        (m) => m.type == MovementType.saida && m.date.isAfter(thirtyDaysAgo)).toList();
+  // Lógica de Negócio Agro: Cálculo de Consumo Médio Dinâmico e Reativo
+  // No agronegócio, insumos como sementes e fertilizantes têm aplicações pontuais por ciclo/mês.
+  // A medida padrão "Por Mês" respeita o acumulado real do mês ativo sem distorcer por projeção semanal indevida.
+  double get averageMonthlyConsumption {
+    final outflows = history.where((m) => m.type == MovementType.saida).toList();
+    if (outflows.isEmpty) return 0.0;
 
-    if (recentOutflows.isEmpty) return 0.0;
+    if (consumptionPeriod == 'Por Semana') {
+      return averageWeeklyConsumption * (30.0 / 7.0);
+    } else if (consumptionPeriod == 'Por Dia') {
+      return averageDailyConsumption * 30.0;
+    }
 
-    final totalOutflow = recentOutflows.fold(0.0, (sum, m) => sum + m.quantity);
+    // Padrão 'Por Mês': agrupa saídas reais por meses ativos no histórico
+    final Map<String, double> monthlySums = {};
+    for (final m in outflows) {
+      final key = '${m.date.year}-${m.date.month.toString().padLeft(2, '0')}';
+      monthlySums[key] = (monthlySums[key] ?? 0.0) + m.quantity;
+    }
 
-    // Identifica o período real decorrido desde o primeiro registro de saída
-    final earliestDate = recentOutflows.map((m) => m.date).reduce((a, b) => a.isBefore(b) ? a : b);
-    final daysElapsed = max(1, DateTime.now().difference(earliestDate).inDays + 1);
+    final activeMonthsCount = monthlySums.length;
+    if (activeMonthsCount == 0) return 0.0;
 
-    if (daysElapsed <= 7) {
-      // Movimentações recentes dentro da mesma semana: reflete o consumo acumulado diretamente
-      return totalOutflow;
-    } else {
-      // Períodos maiores que 7 dias: calcula a taxa média móvel semanal proporcional aos dias observados
+    final totalOutflow = monthlySums.values.fold(0.0, (sum, m) => sum + m);
+    return totalOutflow / activeMonthsCount;
+  }
+
+  double get averageDailyConsumption {
+    final outflows = history.where((m) => m.type == MovementType.saida).toList();
+    if (outflows.isEmpty) return 0.0;
+
+    if (consumptionPeriod == 'Por Dia') {
+      final thirtyDaysAgo = DateTime.now().subtract(const Duration(days: 30));
+      final recentOutflows = outflows.where((m) => m.date.isAfter(thirtyDaysAgo)).toList();
+      final target = recentOutflows.isNotEmpty ? recentOutflows : outflows;
+      final totalOutflow = target.fold(0.0, (sum, m) => sum + m.quantity);
+      final earliestDate = target.map((m) => m.date).reduce((a, b) => a.isBefore(b) ? a : b);
+      final daysElapsed = max(1, DateTime.now().difference(earliestDate).inDays + 1);
       final effectiveDays = min(30, daysElapsed);
-      return (totalOutflow / effectiveDays) * 7.0;
+      return totalOutflow / effectiveDays;
+    } else if (consumptionPeriod == 'Por Semana') {
+      return averageWeeklyConsumption / 7.0;
+    } else {
+      // 'Por Mês': taxa diária é derivada diretamente do consumo médio mensal dividido por 30 dias
+      return averageMonthlyConsumption / 30.0;
     }
   }
 
-  double get averageDailyConsumption => averageWeeklyConsumption / 7.0;
+  double get averageWeeklyConsumption {
+    final outflows = history.where((m) => m.type == MovementType.saida).toList();
+    if (outflows.isEmpty) return 0.0;
+
+    if (consumptionPeriod == 'Por Semana') {
+      final thirtyDaysAgo = DateTime.now().subtract(const Duration(days: 30));
+      final recentOutflows = outflows.where((m) => m.date.isAfter(thirtyDaysAgo)).toList();
+      final target = recentOutflows.isNotEmpty ? recentOutflows : outflows;
+      final totalOutflow = target.fold(0.0, (sum, m) => sum + m.quantity);
+      final earliestDate = target.map((m) => m.date).reduce((a, b) => a.isBefore(b) ? a : b);
+      final daysElapsed = max(1, DateTime.now().difference(earliestDate).inDays + 1);
+      if (daysElapsed <= 7) {
+        return totalOutflow;
+      } else {
+        final effectiveDays = min(30, daysElapsed);
+        return (totalOutflow / effectiveDays) * 7.0;
+      }
+    } else if (consumptionPeriod == 'Por Dia') {
+      return averageDailyConsumption * 7.0;
+    } else {
+      // 'Por Mês': taxa semanal proporcional (média mensal / 4.2857 ou daily * 7)
+      return averageDailyConsumption * 7.0;
+    }
+  }
 
   // Consumo calculado de acordo com a medida escolhida pelo usuário (Por Mês, Por Semana, Por Dia)
   double get averageConsumption {
     switch (consumptionPeriod) {
       case 'Por Dia':
         return averageDailyConsumption;
-      case 'Por Mês':
-        return averageDailyConsumption * 30.0;
       case 'Por Semana':
-      default:
         return averageWeeklyConsumption;
+      case 'Por Mês':
+      default:
+        return averageMonthlyConsumption;
     }
   }
 
@@ -4628,7 +4688,7 @@ class ItemDetailScreen extends StatelessWidget {
         );
 
         final daysLeft = currentProduct.estimatedDaysRemaining;
-        final weeklyUsage = currentProduct.averageWeeklyConsumption;
+        final hasConsumption = currentProduct.averageDailyConsumption > 0;
         final capitalInvested = currentProduct.totalInvestedCapital;
 
         return Scaffold(
@@ -4814,7 +4874,7 @@ class ItemDetailScreen extends StatelessWidget {
                           const SizedBox(width: 10),
                           Expanded(
                             child: Text(
-                              weeklyUsage > 0
+                              hasConsumption
                                   ? 'Média de uso: ${currentProduct.averageConsumption.toStringAsFixed(1)} ${currentProduct.unit.toLowerCase()}${currentProduct.consumptionPeriodLabel} (${currentProduct.consumptionPeriod})'
                                   : 'Média de uso: Sem saídas recentes (${currentProduct.consumptionPeriod})',
                               style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
@@ -4826,8 +4886,8 @@ class ItemDetailScreen extends StatelessWidget {
                       Padding(
                         padding: const EdgeInsets.only(left: 30),
                         child: Text(
-                          weeklyUsage > 0
-                              ? 'Medida configurada: ${currentProduct.consumptionPeriod} • Equivalente: ${(currentProduct.averageDailyConsumption).toStringAsFixed(1)}/dia | ${(currentProduct.averageWeeklyConsumption).toStringAsFixed(1)}/sem | ${(currentProduct.averageDailyConsumption * 30.0).toStringAsFixed(1)}/mês'
+                          hasConsumption
+                              ? 'Medida configurada: ${currentProduct.consumptionPeriod} • Equivalente: ${CultivaFormat.rate(currentProduct.averageDailyConsumption)}/dia | ${CultivaFormat.rate(currentProduct.averageWeeklyConsumption)}/sem | ${CultivaFormat.rate(currentProduct.averageMonthlyConsumption)}/mês'
                               : 'Registre saídas para calcular a taxa média de uso conforme a medida escolhida (${currentProduct.consumptionPeriod})',
                           style: const TextStyle(color: Colors.black54, fontSize: 11),
                         ),
@@ -4894,7 +4954,7 @@ class ItemDetailScreen extends StatelessWidget {
                               const SizedBox(width: 10),
                               Expanded(
                                 child: Text(
-                                  weeklyUsage > 0
+                                  hasConsumption
                                       ? 'Projeção: Dura $daysLeft dias'
                                       : 'Projeção: Sem consumo ativo',
                                   style: TextStyle(

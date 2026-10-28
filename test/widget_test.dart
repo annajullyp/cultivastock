@@ -27,7 +27,7 @@ void main() {
       supplier: 'AgroFertil',
       acquisitionPrice: 120.0,
       history: [],
-      consumptionPeriod: 'Por Mês',
+      consumptionPeriod: 'Por Semana',
     );
 
     repo.addProduct(product);
@@ -79,6 +79,56 @@ void main() {
     expect(product.stockStatusLabel, equals('Crítico'));
   });
 
+  test('Simulação Agro: Insumo Soja com saída pontual de 5 sacos calcula consumo mensal real e projeção correta de estoque', () {
+    final now = DateTime.now();
+
+    // Cenário relatado pelo usuário:
+    // Saldo inicial: 10 sacos. Saída única pontual de 5 sacos.
+    final soja = Product(
+      id: 'prod_soja_simulacao',
+      name: 'Soja',
+      description: 'Sementes de Soja',
+      category: 'Sementes',
+      currentBalance: 5, // 10 inicial - 5 de saída = saldo atual 5
+      unit: 'Sacos',
+      minimumStockDays: 15,
+      validity: now.add(const Duration(days: 180)),
+      acquisitionPrice: 200.0,
+      consumptionPeriod: 'Por Mês', // Padrão Agro
+      history: [
+        StockMovement(
+          id: 'mov_soja_1',
+          date: now,
+          quantity: 5, // Saída pontual de 5 sacos no mês vigente
+          type: MovementType.saida,
+          destination: 'Talhão 01',
+          responsible: 'Agrônomo',
+          description: 'Plantio talhão norte',
+        ),
+      ],
+    );
+
+    // 1. Média de uso mensal não é inflada por projeção semanal (deve ser 5.0 sacos/mês e NÃO 21.4)
+    expect(soja.averageMonthlyConsumption, equals(5.0));
+    expect(soja.averageConsumption, equals(5.0));
+    expect(soja.consumptionPeriodLabel, equals('/mês'));
+
+    // 2. Equivalências proporcionais calculadas a partir da média mensal:
+    // Diária: 5 / 30 ≈ 0.1667 sacos/dia
+    expect(soja.averageDailyConsumption, closeTo(5.0 / 30.0, 0.001));
+    // Semanal: (5 / 30) * 7 ≈ 1.1667 sacos/sem (5 / 4.28)
+    expect(soja.averageWeeklyConsumption, closeTo((5.0 / 30.0) * 7.0, 0.001));
+
+    // Formatações na UI (usando CultivaFormat.rate):
+    expect(CultivaFormat.rate(soja.averageDailyConsumption), equals('0.17'));
+    expect(CultivaFormat.rate(soja.averageWeeklyConsumption), equals('1.17'));
+    expect(CultivaFormat.rate(soja.averageMonthlyConsumption), equals('5.0'));
+
+    // 3. Projeção de duração de estoque: saldo atual 5 sacos / (5/30) = 30 dias (e NÃO 7 dias)
+    expect(soja.estimatedDaysRemaining, equals(30));
+    expect(soja.stockLevelAlert, equals(StockAlertLevel.normal));
+  });
+
   test('Product calculates average consumption by configured measure (Por Mês, Por Semana, Por Dia)', () {
     final now = DateTime.now();
     final productMonthly = Product(
@@ -105,12 +155,13 @@ void main() {
       ],
     );
 
-    // Com 14 sacos de saída recente, consumo diário é 14 / 7 = 2 sacos/dia
-    expect(productMonthly.averageDailyConsumption, equals(2.0));
-    expect(productMonthly.averageWeeklyConsumption, equals(14.0));
-    // Por Mês: 2 * 30 = 60 sacos/mês
-    expect(productMonthly.averageConsumption, equals(60.0));
+    // Consumo mensal apurado com saídas reais no mês ativo
+    expect(productMonthly.averageMonthlyConsumption, equals(14.0));
+    expect(productMonthly.averageConsumption, equals(14.0));
     expect(productMonthly.consumptionPeriodLabel, equals('/mês'));
+    expect(productMonthly.averageDailyConsumption, closeTo(14.0 / 30.0, 0.001));
+    expect(productMonthly.averageWeeklyConsumption, closeTo((14.0 / 30.0) * 7.0, 0.001));
+    expect(productMonthly.estimatedDaysRemaining, equals((100 / (14.0 / 30.0)).floor()));
 
     final productDaily = Product(
       id: 'prod_measure_2',
@@ -143,8 +194,11 @@ void main() {
       history: productMonthly.history,
     );
 
+    expect(productWeekly.averageWeeklyConsumption, equals(14.0));
     expect(productWeekly.averageConsumption, equals(14.0));
     expect(productWeekly.consumptionPeriodLabel, equals('/sem'));
+    expect(productWeekly.averageDailyConsumption, equals(2.0));
+    expect(productWeekly.averageMonthlyConsumption, equals(60.0));
   });
 
   test('Emits BOTH critical stock alert and expiry alert (<= 30 days) without neglecting stock', () {
